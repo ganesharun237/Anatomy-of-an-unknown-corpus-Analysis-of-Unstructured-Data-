@@ -1,0 +1,741 @@
+---
+title: "Analysis of  Unstructured Data - Anatomy of an unknown corpus"
+author: "Ganesh Arunagiri Rajan"
+date: "02/06/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# DAM Assignment 3 - Analysis of Unstructured Data
+
+## Introduction
+
+This report deals with the analysis and insights obtained from performing various text analytics tasks to identify the hidden content,themes and topics of a directory containing several text documents.
+
+
+## Business Understanding
+A mysterious directory named "docs" was identified by the Manager at his workplace computer. He has no idea about what information the directory holds and is uninterested in going through the painstaking task of having to manually interpret them. Hence, he has approached me to help him in identifying the relevant contents,themes and topics hidden in the directory by using Text Analytics.
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#load required libraries
+library(tm) 
+library(SnowballC)
+library(ggplot2)
+library(tidyverse)
+library(wordcloud)
+library(topicmodels)
+library(ldatuning)
+library(igraph)
+library(visNetwork)
+library(ggraph)
+library(tidytext)
+library(textdata)
+library(RWeka)
+library(servr)
+library(text2vec)
+
+#load all documents/files as a single large corpus
+docs <- VCorpus(DirSource("./docs"))
+
+```
+
+
+
+
+## Data Preparation
+All text files in the "doc" directory have been loaded and merged into a large corpus as it is necessary to perform a combined and comparative analysis on all the text files. Having a quick check randomly at one of the documents shows us that there are plenty of unwanted characters which need to be removed from the corpus and the corpus has to be cleaned in order to format the data in a suitable format required for performing Text Analytics. The below mentioned Data Cleaning steps have been performed to convert the corpus into a suitable format for Text Analytics :
+
+* Remove Punctuation Marks : It is important to remove punctuation marks from the corpus as they are insignificant and do not add any value while performing Text Analytics.
+
+* Transform all words and letters to lower case : It's important to convert all the words to lower case because in the process of Text Analytics words are treated with case sensitivity. Hence the same word represented with different cases in the corpus would be treated as 2 seperate words.
+
+* Remove numbers and digits : Numbers and digits need to be removed from the corpus as they do not add any value as we are only concerned with analysis of words to identify hidden topics and themes present in the corpus.
+
+* Remove Stop Words : Stop words refer to the most commonly used words in any language. Although these words are commonly used, they do not hold any significant or important meaning. Hence it is important to remove these stop words present in the corpus so that we can focus on only the important words. Some examples of stop words present in the document below are to, is, in, the and so on.
+
+* Remove Whitespaces : It is also important to remove all white spaces in the corpus as they are insignificant and do not add any value.
+
+* Stemming : Stemming is defined as the process of trimming words to their stem or root by removing suffixes. This is done in order to ensure that same words represented with different suffixes are treated as one words.
+
+
+#### Contents of the randomly selected document before performing the above mentioned data cleaning activities :
+```{r echo=FALSE}
+#inspect document
+writeLines(as.character(docs[[30]]))
+```
+
+
+
+```{r include=FALSE}
+#Data Cleaning
+
+#Remove punctuation - replace punctuation marks with " "
+docs <- tm_map(docs, removePunctuation)
+#Transform to lower case
+docs <- tm_map(docs,content_transformer(tolower))
+#Strip digits
+docs <- tm_map(docs, removeNumbers)
+#Remove stopwords from standard stopword list 
+docs <- tm_map(docs, removeWords, stopwords("english"))
+#Strip whitespace (cosmetic?)
+docs <- tm_map(docs, stripWhitespace)
+
+#Stem document
+##########################
+docs <- tm_map(docs,stemDocument)
+
+#remove custom stopwords
+#NOTE: change stopwords appopriately if you do not stem
+
+myStopwords <- c(stopwords("en"),stopwords("SMART"))
+docs <- tm_map(docs, removeWords, myStopwords)
+```
+
+###### Contents of the same document after performing the above mentioned data cleaning activities :
+
+```{r echo=FALSE}
+#inspect document
+writeLines(as.character(docs[[30]]))
+```
+
+
+
+
+```{r include=FALSE}
+#wordlengths: remove very frequent and very rare words
+#bounds: include only words that occur in at least / at most n_lower / n_upper docs
+dtmr <-DocumentTermMatrix(docs, control=list(wordLengths=c(4, 20),
+                                             bounds = list(global = c(3,45))))
+
+#collapse matrix by summing over columns - this gets total counts (over all docs) for each term
+freq <- colSums(as.matrix(dtmr))
+
+#create sort order (asc)
+ord <- order(freq,decreasing=TRUE)
+
+
+```
+
+
+## Data Understanding
+The "docs" directory contains a total of 42 Text documents. After performing the required data cleaning steps, there are a total of 4166 unique terms or words present in the corpus. The bar chart and word cloud below show the words with the top most occurrences in the corpus. In the wordcloud words with most occurrences are represented bigger while words with lesser occurrences are represented with smaller size. The words project, risk and manag are the top 3 words with most occurrences and their occurrence counts are almost close.
+
+###### histogram of most frequent words in the corpus
+```{r echo=FALSE}
+#histogram of most frequent words in the corpus
+
+wf=data.frame(term=names(freq),occurrences=freq)
+
+#order by frequency
+p <- ggplot(subset(wf, occurrences>200), aes(reorder(term,occurrences), occurrences))
+p <- p + geom_bar(stat="identity")
+p <- p + theme(axis.text.x=element_text(angle=45, hjust=1))
+p
+
+```
+
+
+
+###### Worcloud of the most frequent words in the document
+
+```{r echo=FALSE}
+#wordcloud
+#setting the same seed each time ensures consistent look across clouds
+set.seed(234)
+#limit words by specifying min frequency and add colour
+wordcloud(names(freq),freq,min.freq=180,colors=brewer.pal(6,"Dark2"))
+```
+
+
+
+
+
+
+An unigram denotes just a single word. When words or unigrams are combined paired to form a pair of 2 words or unigrams they are called bigrams and when they are joined to form a group of 3 words they are called trigrams.
+
+The below figure shows the most frequent bigrams in our corpus where project-manag , risk-manag and complet-time are the top 3 most common bigrams.
+
+##### Most frequent Bigrams in the corpus
+
+```{r echo=FALSE}
+#Bigram for plotting
+
+BigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+tdm.bigram = TermDocumentMatrix(docs,
+                                control = list(tokenize = BigramTokenizer))
+
+
+freq = sort(rowSums(as.matrix(tdm.bigram)),decreasing = TRUE)
+freq.df = data.frame(word=names(freq), freq=freq)
+
+
+
+
+ggplot(head(freq.df,15), aes(reorder(word,freq), freq)) +
+  geom_bar(stat = "identity") + coord_flip() +
+  xlab("Bigrams") + ylab("Frequency") +
+  ggtitle("Most frequent bigrams")
+```
+
+
+
+##### Most frequent Trigrams in the corpus
+
+The most frequent trigrams present in our corpus are represented in the below figure. monte-carlo-simul is the most frequent trigram in the corpus.
+```{r echo=FALSE}
+#Trigram for plotting
+
+TrigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+tdm.trigram = TermDocumentMatrix(docs,
+                                 control = list(tokenize = TrigramTokenizer))
+
+
+
+freq = sort(rowSums(as.matrix(tdm.trigram)),decreasing = TRUE)
+freq.df = data.frame(word=names(freq), freq=freq)
+
+
+
+ggplot(head(freq.df,15), aes(reorder(word,freq), freq)) +   
+  geom_bar(stat="identity") + coord_flip() + 
+  xlab("Trigrams") + ylab("Frequency") +
+  ggtitle("Most frequent trigrams")
+```
+
+
+
+
+
+Grouping the words or unigrams into bigrams and trigrams has given us a basic idea of what the hidden themes and topics in our corpus could be. In this case, analysing the bigrams and trigrams idndicates that our top topics could be related to :
+
+* Project management  
+* risk management 
+* monte carlo simulation
+
+
+## Analysis
+
+Although bigrams and trigrams give us a quick glimpse of what our topics would look like, it is important to further use Text analytics approaches to dive deeper into identifying the appropriate topics.
+
+The first text analytics approach we would be looking at is Clustering.
+
+### Clustering
+
+Clustering is defined as the process of grouping a set of objects such that objects within the same group are more similar to each other and objects in different groups are less similar to each other. In the case of text analytics, clustering groups documnets with similar words under the same group and dissimilar documents in different groups. There are 2 types of clustering methods available which are :
+
+* Hierarchial clustering
+* K means clustering
+
+Since both the clustering methods compute differently, in our approach we have used both the clustering methods to compare the results from both the methods and decide on the suitable number of clusters which can be formed for the corpus.
+
+
+#### Hierarchial clustering
+
+The hierarchial clustering model was run and after many trial and errors performed for identifying the optimal number of subtrees or cluster it was finally decided that either 5 or 6 clusters would be the most optimal number of cluster groups for our corpus.
+
+The dendrogram plots below were obtained for 5 and 6 cluster groups respectively. In the dendrogram, branch points which have large sepearation space between them resemble well defined clusters  and branch points which are closely spaced with each other denotes dissimilarity. In our analysis the clusters formed when dividing the dendrogram into 5 and 6 subtress looked to be very well defined with large sepeartion space between the border branch points of well defined clusters.
+
+
+##### Hierarchial Clustering dendrogram for 5 subtrees :
+```{r echo=FALSE}
+
+
+#convert dtm to matrix 
+m<-as.matrix(dtmr)
+# Cosine distance  is used for Hierarchial clustering
+cosineSim <- function(x){
+  as.dist(x%*%t(x)/(sqrt(rowSums(x^2) %*% t(rowSums(x^2)))))
+}
+cs <- cosineSim(m)
+cd <- 1-cs
+
+#run hierarchical clustering using cosine distance
+groups <- hclust(cd,method="ward.D")
+#plot, use hang to ensure that labels fall below tree
+plot(groups, hang=-1)
+#cut into 5 subtrees.
+rect.hclust(groups,5)
+hclusters_cosine <- cutree(groups,5)
+
+```
+
+##### Hierarchial Clustering dendrogram for 6 subtrees :
+```{r echo=FALSE}
+
+
+
+
+#plot, use hang to ensure that labels fall below tree
+plot(groups, hang=-1)
+#cut into 6 subtrees.
+rect.hclust(groups,6)
+hclusters_cosine <- cutree(groups,6)
+
+```
+
+
+#### K-means clustering
+
+Since 5 and 6 were found as the optimal number of cluster groups for our corpus, the k values of 5 and 6 were attempted for the K-means clustering to prove that 5 or 6 could be the ideal number of clusters for this corpus.
+
+The clusplot shows the variability between the different cluster groups formed. An ideal k value would be the one for which the variability between the clusters is high. In this case the variability observed on the clusplots for both k equals 5 and 6 are same at 49.02%
+
+
+##### Clusplot for K=5 :
+```{r echo=FALSE}
+#kmeans clustering
+
+library(cluster)
+# Cosine distance  is used for K-means clustering
+cosineSim <- function(x){
+  as.dist(x%*%t(x)/(sqrt(rowSums(x^2) %*% t(rowSums(x^2)))))
+}
+cs <- cosineSim(m)
+cd <- 1-cs
+
+#Run the K-means clustering algorithm for k=5
+kfit <- kmeans(cd, 5, nstart=100)
+
+clusplot(as.matrix(cd), kfit$cluster, color=T, shade=T, labels=2, lines=0)
+#print contents of kfit
+#print(kfit)
+#print cluster sizes
+#kfit$size
+#print clusters (members)
+#kfit$cluster
+
+#sum of squared distance between cluster centers 
+#kfit$betweenss
+#sum of squared distance within a cluster (this are the quantities that the algorithm
+#attempts to minimise)
+#kfit$withinss
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+##### Clusplot for K=6 :
+
+```{r echo=FALSE}
+
+# Run the k-means clustering algorithm for k=6
+kfit <- kmeans(cd, 6, nstart=100)
+
+clusplot(as.matrix(cd), kfit$cluster, color=T, shade=T, labels=2, lines=0)
+```
+
+
+Although the clusplot returned the same value of variability for k values of 5 and 6. In order to further consider the optimal k value the elbow plot can be considered. The ideal k-value or number of clusters would be the one at which the within-group sum of squares (WSS) cannot be decreased further or slows down with increase in number of clusters. Here, it can be seen clearly that the decrease in within-group sum of squares slows down or is flat after 5 clusters. Hence, it is proved that out of k values of 5 and 6; 5 is the most optimal number of clusters for grouping our corpus.
+
+
+##### Elbow Plot for K-means clustering :
+
+```{r echo=FALSE}
+#kmeans - how to determine optimal number of clusters?
+#One approach: look for "elbow" in plot of summed intra-cluster distances (withinss) as fn of k
+wss <- 2:(length(docs)-1)
+for (i in 2:(length(docs)-1)) wss[i] <- sum(kmeans(cd,centers=i,nstart=25)$withinss)
+plot(2:(length(docs)-1), wss[2:(length(docs)-1)], type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares") 
+```
+
+
+
+
+
+
+
+
+### Topic Modelling
+
+
+
+However, till now we have only  found out the ideal number of clusters for our corpus. What topics the 5 clusters correspond to is still a question. The solution for finding this is by using the topic modelling approach which helps to find the corresponding topics for different clusters. The Latent Dirichlet Allocation algorith has been used for topic modelling in this analysis.
+
+
+
+
+
+
+Although our ideal cluster or k value has been identified as 5. Topic modelling was done for both 5 and 6 clusters to check if the topic of the 6th cluster was completely unique  from the other 5 clusters.
+
+
+
+```{r include=FALSE}
+# The burn-in period is used to ensure that we start from a representative point. There
+# is some controversy about the need to use burn-in periods. See: 
+# https://www.johndcook.com/blog/2011/08/10/markov-chains-dont-converge/ for example
+# We'll ignore the controversy and set...
+burnin <- 1000
+# and perform 2000 iterations (after burn-in)...
+iter <- 2000
+#..taking every 500th one for further use. This "thinning" is done to ensure that
+# samples are not correlated.
+thin <- 500
+#We'll use 5 different, randomly chosen starting points
+nstart <- 5
+#using random integers as seed. Feel free to change these
+seed <- list(2003,5,63,100001,765)
+#...and take the best run (the one with the highest probability) as the result
+best <- TRUE
+```
+
+
+
+```{r include=FALSE}
+#set k=5
+k <- 5
+
+# Run LDA algorithm
+ldaOut <- LDA(dtmr,k, method="Gibbs", control=
+                list(nstart=nstart, seed = seed, best=best, burnin = burnin, iter = iter, thin=thin))
+
+ldaOut.topics <-as.matrix(topics(ldaOut))
+
+```
+
+
+
+##### Top 8 most frequent words for every topic obtained for K=5 :
+```{r echo=FALSE}
+terms(ldaOut,8)
+```
+
+
+From the above topic groups/clusters formed; the meaning/theme of each topic can be interpreted as follows :
+
+* Topic 1 deals with asking questions, discussing and development of ideas and argument over a point or idea
+
+* Topic 2 deals with Project management and risk management
+
+* Topic 3 deals with organisation practices , model design and technique
+
+* Topic 4 deals with clustering of documents and data algorithms
+
+* Topic 5 deals with Task distribution and task completion
+
+
+
+
+```{r include=FALSE}
+#set k=6
+k <- 6
+
+# Run LDA algorithm
+ldaOut_6 <- LDA(dtmr,k, method="Gibbs", control=
+                list(nstart=nstart, seed = seed, best=best, burnin = burnin, iter = iter, thin=thin))
+
+```
+
+
+
+##### Top 8 most frequent words for every topic obtained for K=6 :
+```{r echo=FALSE}
+terms(ldaOut_6,8)
+```
+
+
+From the above topic groups/clusters formed; the meaning/theme of each topic can be interpreted as follows :
+
+* Topic 1 deals with project management, work organisation and process
+
+* Topic 2 deals with Project management and risk management
+
+* Topic 3 deals with Task distribution and task completion
+
+* Topic 4 deals with clustering of documents and words(refers to the topic of text analytics)
+
+* Topic 5 deals with data modelling
+
+* Topic 6 deals with asking questions, discussing and development of ideas and argument over a point or idea
+
+
+
+From the above comaprisons it can be noted that :
+
+* (Topic 1,K=5) is similar to  (Topic 6, k=6)
+
+* (Topic 2,K=5) is similar to  (Topic 2, k=6) and (Topic 1,k=6)
+
+* (Topic 3, k=5) is similar to (Topic 1, k=6)
+
+* (Topic 5, k=5) is similar to (Topic 3 , k=5)
+
+* (Topic 4, k=5) is similar to (Topic 4, k=6) and (Topic 5, k=6)
+
+
+Hence from the comparison above it is evident that Topic 2 in K=5 has been split into Topic 2 and Topic 1 in K=6. Topic 2 in k=5 relates to risk management and project management which got split into 2 topics(Topic 1 & 2 , k=6) with high similarity of words(Proj & manag) when k was made 6.  This split is unnecessary as after the split both the topics have high similarity of words.
+
+
+Another interesting comparison was the split of Topic 4 in k=5 into (Topic 4, k=6) and (Topic 5, k=6). Topic 4 in k=5 relates to a combination of data algorithms and text analytics terms, which got split into :
+
+
+
+
+* (Topic 4, k=6) which represents terms related to text analytics.
+
+*  (Topic 5, k=6) which represents terms related to data algorithms.
+
+Again I assume this split also to be unnecessary as although data algorithms and text analytics are 2 different topics, they both fall under the broader category of Machine learning algorithms.
+
+
+On summing all the above findings it can again be reconfirmed that the ideal number of clusters for the corpus is 5 and not 6.
+
+
+
+### Network Graphs
+
+Now as we have almost confirmed that our ideal number of topics is k=5, it's time to reconfirm the same for the last time by plotting the network graph. In the network graph each document is represented as a node and the similarity between documents is represented by an edge between the two similar nodes. In text analytics similarity is calculated based on the similarity of words present in documents. Aditionally, the topic assignment for every document was represented on the network graph by colours. Documents whuch were assigned the same topic by the LDA model were represented by nodes with same colour on thenetwork graph.
+
+ 
+
+The topic assignment for every document by the LDA model can be found below.
+
+```{r}
+topics(ldaOut)
+```
+
+Colour codings for the topics have been done as mentioned below :
+
+* Topic 1 - darkblue
+* Topic 2 - green
+* Topic 3 - brown
+* Topic 4 - black
+* Topic 5 - pink
+
+
+It can be observed from the network graph that Topic 1(dark blue), Topic 4(black) and Topic 5(pink) have been perfectly clustered as their clusters are distinct. There is high similarity between them as the nodes in these topics are connected mostly to only the nodes which belong to the same topic and there is no mix with nodes belonging to other topics.
+
+
+However Topics 2 and 3  are not distinctly clustered as there is a lot of similarity between the documents of these 2 topics. 
+
+```{r include=FALSE}
+#convert dtm to matrix (what format is the dtm stored in?)
+m<-as.matrix(dtmr)
+
+#Map filenames to matrix row numbers
+#these numbers will be used to reference files in the network graph
+filekey <- cbind(1:length(docs),rownames(m))
+write.csv(filekey,"filekey.csv",row.names = FALSE)
+#have a look at file
+rownames(m) <- 1:length(docs)
+#compute cosine similarity between document vectors
+#converting to distance matrix sets diagonal elements to 0
+cosineSim <- function(x){
+  as.dist(x%*%t(x)/(sqrt(rowSums(x^2) %*% t(rowSums(x^2)))))
+}
+cs <- cosineSim(m)
+
+#adjacency matrix: set entries below a certain threshold to 0.
+#We choose half the magnitude of the largest element of the matrix
+#as the cutoff. This is an arbitrary choice
+cs[cs < max(cs)/2] <- 0
+cs <- round(cs,3)
+
+
+
+
+# build a graph from the above matrix
+#mode is undirected because similarity is a bidirectional relationship
+g <- graph.adjacency(as.matrix(cs), weighted=T, mode = "undirected")
+
+
+# convert graph to visnetwork object
+data <- toVisNetworkData(g)
+
+
+
+n <- as.data.frame(data$nodes)
+
+e <- as.data.frame(data$edges)
+
+
+lad <- as.data.frame(ldaOut.topics)
+
+
+lad$ID <- seq.int(nrow(lad))
+
+no <- cbind(n, lad$V1)
+
+
+no <- no %>% 
+  rename(
+    'group' = 'lad$V1')
+
+# Assign colours to document nodes belonging to similar topics
+
+no$color[no$group == 1] <- "darkblue" 
+no$color[no$group == 2] <- "green"
+no$color[no$group == 3] <- "brown"
+no$color[no$group == 4] <- "black"
+no$color[no$group == 5] <- "pink" 
+
+
+
+
+```
+
+#### Network graph representing topics of documents :
+
+```{r}
+#plot network graph
+visNetwork(no, e)
+```
+
+
+### Sentiment Analysis
+
+
+Although we have identified the topics of documents, we are still not aware whether the documents carry positive or negative feelings. This can be identified by performing sentiment analysis on the documents.
+
+From the sentiment analysis score obtained for each document it can be observed that documents 1 to 10 and 34 to 42 all had negative sentiments. However, it was interesting to note that most of the Documents from 11 to 34 had positive sentiment scores.
+
+
+
+```{r include=FALSE}
+# perform sentiment analysis
+t_corpus <- docs %>% tidy()
+t_corpus
+
+
+
+d_corpus <- t_corpus %>% 
+  select(id, text)
+
+
+
+tidy_df <- t_corpus %>%
+  unnest_tokens(word, text)
+
+
+
+
+
+
+tidy_sent <- sentiments
+
+
+
+
+
+
+
+tidy_df_sent <- tidy_df %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(id, sentiment) %>%
+  spread(sentiment, n, fill = 0)
+
+
+
+
+
+
+
+
+tidy_df_sent <- tidy_df_sent %>%
+  mutate(sentiment = positive - negative)
+
+tidy_df_sent
+
+
+
+
+
+
+
+
+
+```
+
+
+
+#### Sentiment analysis for each document :
+
+```{r echo=FALSE}
+ggplot(tidy_df_sent, aes(id, sentiment, fill = id)) +
+  geom_col(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+The below plot shows the top words contributing to both positive  and negative sentiments. It is interesting to note that the word risk has largely contributed to the negative sentiment. Another interesting point to note is that almost all of the documents from Document 1 to 10 belong to Topic 2 in which risk is the most frequently occurring word in that topic. Hence documents 1 to 10 are having a negative sentiment.
+
+
+#### Top words contributing to both positive and negative sentiments :
+
+```{r echo=FALSE}
+
+bing_word_counts <- tidy_df %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word,n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+```
+
+### Evaluation
+
+From the dendrogram of hierarchial clustering and clusplot of k-means clustering, it was clearly evident that the total number of topics for the corpus should either be 5 or 6. But it was difficult to pick the most optimal one out of the two. From the elbow plot of K-means clustering it was clearly visible that the ideal number of clusters for the corpus is 5. From the LDA model it was clearly noted that there are a total of 5 relevant topics in the corpus. Since both the results of the number of clusters and number of topics in the corpus was 5; it gave solid backing to select 5 as the optimal number of clusters and topics. This claim was further strengthened from the Network graph where the clusters of Topic 1,4 and 5 were clearly distinct with only Topics 2 and 3 not having distinct clusters due to few similarities observed between them.
+
+
+### Conclusion
+
+It can be concluded from this analysis that the ideal number of topics and clusters for the documents present in the "doc" folder is 5. These 5 topics are closely relevant to the ones as mentioned below.
+
+
+* Topic 1 deals with asking questions, discussing and development of ideas and argument over a point or idea
+
+* Topic 2 deals with Project management and risk management
+
+* Topic 3 deals with organisation practices , model design and technique
+
+* Topic 4 deals with clustering of documents and data algorithms
+
+* Topic 5 deals with Task distribution and task completion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
