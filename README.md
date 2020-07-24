@@ -1,0 +1,2 @@
+# Anatomy-of-an-unknown-corpus-Analysis-of-Unstructured-Data-
+Analyse a directory named 'doc' which contains multiple text files with unknown content to identify the suitable number of clusters(Clustering) into which the text files can be divided into, identify the ideal number of themes/topics (Topic Modelling) the text files can be grouped into and verify them using a Network graph based on similarities of content between the text files. Perform sentiment analysis on the contents of each text file to identify the sentiment of each file.
